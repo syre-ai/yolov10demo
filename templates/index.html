@@ -265,6 +265,7 @@
             const filename = src.split('/').pop();
             const inputImage = document.getElementById('inputImage');
             const groundTruthImage = document.getElementById('groundTruthImage');
+            const gallery = document.getElementById('exampleGallery');
             
             // Display images
             inputImage.src = src;
@@ -284,6 +285,8 @@
             dataTransfer.items.add(file);
             document.getElementById('fileInput').files = dataTransfer.files;
             window.selectedExampleImage = src;
+
+            gallery.style.display = 'none';
         }
     
         document.getElementById('toggleExamples').onclick = function() {
