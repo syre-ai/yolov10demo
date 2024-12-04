@@ -71,7 +71,7 @@ The system provides several metrics for evaluating detection performance:
 
 ## Setup and Usage
 
-Can be accessed at yolov10demo.live or locally:
+Can be accessed at <https://yolov10demo.live> or locally:
 
 1. Clone the repository:
 ```bash
