@@ -1,0 +1,654 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>YOLOv10 Detection</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            font-family: system-ui, -apple-system, sans-serif;
+            background: #f7f7f7;
+        }
+        .header {
+            max-width: 1200px;
+            margin: 0 auto 20px;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+        .controls {
+            max-width: 1200px;
+            margin: 0 auto 20px;
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+        .panel {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+        .panel-title {
+            font-size: 1.1em;
+            font-weight: 600;
+            margin-bottom: 15px;
+            color: #333;
+        }
+        .control-group {
+            margin-bottom: 15px;
+            display: grid;
+            grid-template-columns: 200px 1fr;
+            align-items: center;
+            gap: 10px;
+        }
+        select, input[type="file"], button {
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        button {
+            background: #007bff;
+            color: white;
+            border: none;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        button:hover {
+            background: #0056b3;
+        }
+        .media-container {
+            width: 100%;
+            aspect-ratio: 16/9;
+            background: #eee;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+            position: relative;
+        }
+        .media-container video,
+        .media-container img,
+        .media-container canvas {
+            max-width: 100%;
+            max-height: 100%;
+            object-fit: contain;
+        }
+        .loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0,0,0,0.7);
+            color: white;
+            padding: 10px 20px;
+            border-radius: 4px;
+            display: none;
+        }
+
+        .gallery {
+            display: grid;
+            grid-template-columns: repeat(8, 150px);
+            gap: 15px;
+            padding: 15px;
+            background: #f5f5f5;
+            border-radius: 4px;
+            width: calc(100vw - 100px);
+            margin-left: -20px;
+        }
+
+        .gallery img {
+            width: 150px;
+            height: 150px;
+            object-fit: cover;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+
+        .gallery img:hover {
+            transform: scale(1.05);
+            box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>YOLOv10 Object Detection</h1>
+    </div>
+
+    <div class="controls">
+        <div class="control-group">
+            <label>Model:</label>
+            <select id="modelSelect">
+                {% for model in models %}
+                    <option value="{{ model }}">{{ model }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        
+        <div class="control-group">
+            <label>Image Size: <span id="imageSizeValue">640</span></label>
+            <input type="range" id="imageSize" min="320" max="1280" step="32" value="640">
+        </div>
+        
+        <div class="control-group">
+            <label>Confidence: <span id="confValue">0.25</span></label>
+            <input type="range" id="confThreshold" min="0" max="1" step="0.05" value="0.25">
+        </div>
+        
+        <div class="control-group">
+            <label>Input Source:</label>
+            <div>
+                <button id="startWebcam" class="btn">Start Webcam</button>
+                <button id="stopWebcam" class="btn" style="display: none;">Stop Webcam</button>
+                <span style="margin: 0 10px;">or</span>
+                <input type="file" id="fileInput" accept="image/*,video/*">
+            </div>
+        </div>
+
+        <div class="control-group">
+            <div>
+                <button id="startDetection" class="btn btn-primary">Start Detection</button>
+                <button id="stopDetection" class="btn" style="display: none;">Stop Detection</button>
+                <button id="resetButton" class="btn btn-danger">Reset</button>
+            </div>
+        </div>
+
+        <div class="control-group">
+            <div>
+                <button id="toggleExamples" class="btn">
+                    <span class="folder-icon">📁</span> Example Images
+                </button>
+                <div id="exampleGallery" style="display: none;" class="gallery">
+                    <!-- Images will be loaded here dynamically -->
+                </div>
+            </div>
+        </div>
+
+        <div class="control-group">
+            <label>
+                <input type="checkbox" id="showGroundTruth" checked>
+                Show Ground Truth Boxes
+            </label>
+        </div>
+
+        <div class="metrics-panel" style="background: white; padding: 15px; border-radius: 8px; margin-top: 10px;">
+            <h3>Detection Metrics</h3>
+            <div id="iouScore"></div>
+            <div id="falseNegatives"></div>
+            <div id="falsePositives"></div>
+        </div>
+    </div>
+
+    <div class="container">
+        <div class="panel">
+            <div class="panel-title">Input</div>
+            <div class="media-container" id="inputMediaContainer">
+                <img id="inputImage" style="display: none;">
+                <video id="inputVideo" style="display: none;" controls></video>
+            </div>
+        </div>
+        
+        <div class="panel">
+            <div class="panel-title">Output</div>
+            <div class="media-container" id="outputMediaContainer">
+                <img id="outputImage" style="display: none;">
+                <canvas id="outputCanvas" style="display: none;"></canvas>
+                <div class="loading">Processing...</div>
+            </div>
+        </div>
+
+        <div class="panel">
+            <div class="panel-title">Ground Truth</div>
+            <div class="media-container">
+                <img id="groundTruthImage" style="display: none;">
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let webcamActive = false;
+        let detectionActive = false;
+    
+        function updateMetrics(avgIoU) {
+            document.getElementById('iouScore').innerHTML = `
+                <p>Average IoU Score: <strong>${avgIoU.toFixed(3)}</strong></p>
+            `;
+        }
+    
+        document.getElementById('imageSize').oninput = function() {
+            document.getElementById('imageSizeValue').textContent = this.value;
+        }
+        
+        document.getElementById('confThreshold').oninput = function() {
+            document.getElementById('confValue').textContent = this.value;
+        }
+        
+        document.getElementById('fileInput').onchange = function(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+        
+            const inputImage = document.getElementById('inputImage');
+            const inputVideo = document.getElementById('inputVideo');
+            const outputImage = document.getElementById('outputImage');
+            const outputCanvas = document.getElementById('outputCanvas');
+        
+            [inputImage, inputVideo, outputImage, outputCanvas].forEach(el => el.style.display = 'none');
+        
+            if (file.type.startsWith('image/')) {
+                inputImage.style.display = 'block';
+                inputImage.src = URL.createObjectURL(file);
+            } else if (file.type.startsWith('video/')) {
+                inputVideo.style.display = 'block';
+                inputVideo.src = URL.createObjectURL(file);
+            }
+        }
+        
+        async function loadExampleImages() {
+            const gallery = document.getElementById('exampleGallery');
+            const response = await fetch('/get_examples');
+            const images = await response.json();
+            
+            gallery.innerHTML = images.map(img => 
+                `<img src="/examples/${img}" alt="${img}" onclick="selectExampleImage(this.src)">`
+            ).join('');
+        }
+    
+        async function selectExampleImage(src) {
+            const filename = src.split('/').pop();
+            const inputImage = document.getElementById('inputImage');
+            const groundTruthImage = document.getElementById('groundTruthImage');
+            
+            // Display images
+            inputImage.src = src;
+            inputImage.style.display = 'block';
+            document.getElementById('inputVideo').style.display = 'none';
+            
+            // Get ground truth
+            const response = await fetch(`/get_ground_truth/${filename}`);
+            const data = await response.json();
+            groundTruthImage.src = `data:image/jpeg;base64,${data.ground_truth}`;
+            groundTruthImage.style.display = 'block';
+            
+            // Set up file for detection
+            const blob = await fetch(src).then(r => r.blob());
+            const file = new File([blob], filename, { type: 'image/jpeg' });
+            const dataTransfer = new DataTransfer();
+            dataTransfer.items.add(file);
+            document.getElementById('fileInput').files = dataTransfer.files;
+            window.selectedExampleImage = src;
+        }
+    
+        document.getElementById('toggleExamples').onclick = function() {
+            const gallery = document.getElementById('exampleGallery');
+            if (gallery.style.display === 'none') {
+                gallery.style.display = 'grid';
+                loadExampleImages();
+            } else {
+                gallery.style.display = 'none';
+            }
+        };
+    
+        async function detectObjects() {
+            const fileInput = document.getElementById('fileInput');
+            const file = fileInput.files[0];
+            if (!file) {
+                console.error("No file selected for detection.");
+                return;
+            }
+    
+            const formData = new FormData();
+            formData.append('file', file);
+            formData.append('model', document.getElementById('modelSelect').value);
+            formData.append('image_size', document.getElementById('imageSize').value);
+            formData.append('conf', document.getElementById('confThreshold').value);
+            formData.append('show_gt', document.getElementById('showGroundTruth').checked);
+    
+            const loading = document.querySelector('.loading');
+            const outputImage = document.getElementById('outputImage');
+            const outputCanvas = document.getElementById('outputCanvas');
+            
+            loading.style.display = 'block';
+            outputImage.style.display = 'none';
+            outputCanvas.style.display = 'none';
+    
+            try {
+                const response = await fetch('/detect', {
+                    method: 'POST',
+                    body: formData
+                });
+    
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    console.error("Detection error:", errorText);
+                    alert("Error during detection: " + errorText);
+                    return;
+                }
+    
+                const data = await response.json();
+    
+                // Display processed image if available
+                if (data.type === 'image') {
+                    outputImage.style.display = 'block';
+                    outputImage.src = `data:image/jpeg;base64,${data.data}`;
+                } else if (data.type === 'video') {
+                    outputCanvas.style.display = 'block';
+                    const ctx = outputCanvas.getContext('2d');
+                    
+                    async function getFrames() {
+                        while (detectionActive) {
+                            const frameResponse = await fetch(`/get_frame/${data.session_id}`);
+                            const frameData = await frameResponse.json();
+                            
+                            if (frameData.end) break;
+                            
+                            const img = new Image();
+                            img.onload = () => {
+                                outputCanvas.width = img.width;
+                                outputCanvas.height = img.height;
+                                ctx.drawImage(img, 0, 0);
+                            };
+                            img.src = `data:image/jpeg;base64,${frameData.frame}`;
+                            await new Promise(resolve => setTimeout(resolve, 30));
+                        }
+                    }
+                    
+                    getFrames();
+                }
+    
+                // Update metrics
+                if (data.avg_iou !== undefined) {
+                    document.getElementById('iouScore').innerHTML = `
+                        <p>Average IoU: <strong>${data.avg_iou.toFixed(3)}</strong></p>
+                    `;
+                }
+                if (data.false_negatives !== undefined) {
+                    document.getElementById('falseNegatives').innerHTML = `
+                        <p>False Negatives: <strong>${data.false_negatives}</strong></p>
+                    `;
+                }
+                if (data.false_positives !== undefined) {
+                    document.getElementById('falsePositives').innerHTML = `
+                        <p>False Positives: <strong>${data.false_positives}</strong></p>
+                    `;
+                }
+            } catch (error) {
+                console.error("Error during object detection:", error);
+                alert("An error occurred during detection. Check the console for details.");
+            } finally {
+                loading.style.display = 'none';
+            }
+        }
+    
+        async function startWebcam() {
+            try {
+                // Get user's webcam stream
+                const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+                const videoElement = document.createElement('video');
+                videoElement.srcObject = stream;
+                videoElement.id = 'webcamVideo';
+                videoElement.autoplay = true;
+                
+                // Set up canvas for frame capture
+                const canvas = document.createElement('canvas');
+                const ctx = canvas.getContext('2d');
+                
+                // Add video element to input container
+                const inputContainer = document.getElementById('inputMediaContainer');
+                const inputImage = document.getElementById('inputImage');
+                const inputVideo = document.getElementById('inputVideo');
+                
+                // Hide other input elements
+                inputImage.style.display = 'none';
+                inputVideo.style.display = 'none';
+                
+                inputContainer.appendChild(videoElement);
+                
+                // Wait for video to be ready
+                await new Promise(resolve => videoElement.onloadedmetadata = resolve);
+                canvas.width = videoElement.videoWidth;
+                canvas.height = videoElement.videoHeight;
+                
+                // Update UI
+                webcamActive = true;
+                document.getElementById('startWebcam').style.display = 'none';
+                document.getElementById('stopWebcam').style.display = 'inline';
+                
+                // Start frame processing
+                displayWebcamStream(videoElement, canvas, ctx);
+            } catch (error) {
+                console.error("Error accessing webcam:", error);
+                alert("Could not access webcam. Please check permissions and try again.");
+            }
+        }
+        
+        async function displayWebcamStream(videoElement, canvas, ctx) {
+            while (webcamActive) {
+                try {
+                    // Capture frame from video
+                    ctx.drawImage(videoElement, 0, 0);
+                    const frameBlob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg'));
+                    
+                    if (detectionActive) {
+                        // Process frame through model
+                        const formData = new FormData();
+                        formData.append('file', frameBlob, 'frame.jpg');
+                        formData.append('model', document.getElementById('modelSelect').value);
+                        formData.append('image_size', document.getElementById('imageSize').value);
+                        formData.append('conf', document.getElementById('confThreshold').value);
+                        formData.append('is_webcam_frame', 'true');
+                        
+                        try {
+                            const response = await fetch('/detect', {
+                                method: 'POST',
+                                body: formData
+                            });
+                            
+                            if (!response.ok) {
+                                throw new Error(`HTTP error! status: ${response.status}`);
+                            }
+                            
+                            const contentType = response.headers.get("content-type");
+                            if (!contentType || !contentType.includes("application/json")) {
+                                throw new Error("Received non-JSON response from server");
+                            }
+                            
+                            const data = await response.json();
+                            if (data.type === 'image') {
+                                const outputImage = document.getElementById('outputImage');
+                                outputImage.style.display = 'block';
+                                outputImage.src = `data:image/jpeg;base64,${data.data}`;
+                            }
+                        } catch (error) {
+                            console.error("Error processing frame:", error);
+                            // Don't break the loop on error, just continue to next frame
+                        }
+                    }
+                    
+                    // Control frame rate
+                    await new Promise(resolve => setTimeout(resolve, 30));
+                } catch (error) {
+                    console.error("Error in webcam stream:", error);
+                    // Break the loop if we get a critical error
+                    if (!webcamActive) break;
+                }
+            }
+            
+            // Cleanup when webcam is stopped
+            const videoStream = videoElement.srcObject;
+            const tracks = videoStream.getTracks();
+            tracks.forEach(track => track.stop());
+            videoElement.remove();
+        }
+        
+        document.getElementById('startWebcam').onclick = startWebcam;
+        
+        document.getElementById('stopWebcam').onclick = function() {
+            webcamActive = false;
+            detectionActive = false;
+            this.style.display = 'none';
+            document.getElementById('startWebcam').style.display = 'inline';
+            document.getElementById('stopDetection').style.display = 'none';
+            document.getElementById('startDetection').style.display = 'inline';
+            
+            // Reset output display
+            const outputImage = document.getElementById('outputImage');
+            outputImage.style.display = 'none';
+            outputImage.src = '';
+        };
+        
+        document.getElementById('startDetection').onclick = function () {
+            const fileInput = document.getElementById('fileInput');
+            const file = fileInput.files[0];
+            const videoPlayer = document.getElementById('inputVideo');
+
+            // Logic for detecting images
+            if (file && file.type.startsWith('image/')) {
+                detectionActive = false;
+                detectObjects();
+                return;
+            }
+
+            // Logic for video files
+            if (file && file.type.startsWith('video/')) {
+                detectionActive = !detectionActive;
+                if (detectionActive) {
+                    this.textContent = "Stop Detection";
+                    videoPlayer.play();
+                    processVideoFrames(videoPlayer);
+                } else {
+                    this.textContent = "Start Detection";
+                    videoPlayer.pause();
+                }
+                return;
+            }
+
+            // Logic for webcam
+            if (webcamActive) {
+                detectionActive = !detectionActive;
+                this.textContent = detectionActive ? "Stop Detection" : "Start Detection";
+            } else {
+                alert("Please upload a valid video or start the webcam.");
+            }
+        };
+        
+        async function processVideoFrames(videoPlayer) {
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            
+            // Set canvas size to match video
+            canvas.width = videoPlayer.videoWidth;
+            canvas.height = videoPlayer.videoHeight;
+            
+            while (detectionActive && !videoPlayer.ended && !videoPlayer.paused) {
+                try {
+                    // Draw the current frame to canvas
+                    ctx.drawImage(videoPlayer, 0, 0);
+                    const frameBlob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg'));
+                    
+                    // Process frame through model
+                    const formData = new FormData();
+                    formData.append('file', frameBlob, 'frame.jpg');
+                    formData.append('model', document.getElementById('modelSelect').value);
+                    formData.append('image_size', document.getElementById('imageSize').value);
+                    formData.append('conf', document.getElementById('confThreshold').value);
+                    
+                    const response = await fetch('/detect', {
+                        method: 'POST',
+                        body: formData
+                    });
+                    
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! status: ${response.status}`);
+                    }
+                    
+                    const data = await response.json();
+                    if (data.type === 'image') {
+                        const outputImage = document.getElementById('outputImage');
+                        outputImage.style.display = 'block';
+                        outputImage.src = `data:image/jpeg;base64,${data.data}`;
+                    }
+                    
+                    // Wait for next frame
+                    await new Promise(resolve => setTimeout(resolve, 1000/30)); // Limit to ~30 FPS
+                    
+                } catch (error) {
+                    console.error("Error processing video frame:", error);
+                    if (!detectionActive) break;
+                }
+            }
+            
+            if (!detectionActive || videoPlayer.ended) {
+                document.getElementById('startDetection').textContent = "Start Detection";
+                detectionActive = false;
+            }
+        }
+
+        document.getElementById('resetButton').onclick = function () {
+            // Clear the file input
+            const fileInput = document.getElementById('fileInput');
+            fileInput.value = '';
+    
+            // Hide input elements
+            const inputImage = document.getElementById('inputImage');
+            const inputVideo = document.getElementById('inputVideo');
+            inputImage.style.display = 'none';
+            inputVideo.style.display = 'none';
+    
+            // Hide output elements
+            const outputImage = document.getElementById('outputImage');
+            const outputCanvas = document.getElementById('outputCanvas');
+            outputImage.style.display = 'none';
+            outputImage.src = ''; // Clear the old output
+            outputCanvas.style.display = 'none';
+
+            detectionActive = false;
+            const videoPlayer = document.getElementById('inputVideo');
+            if (videoPlayer) {
+                videoPlayer.pause();
+                videoPlayer.currentTime = 0;
+            }
+            // Reset ground truth image
+            const groundTruthImage = document.getElementById('groundTruthImage');
+            if (groundTruthImage) {
+                groundTruthImage.style.display = 'none';
+                groundTruthImage.src = '';
+            }
+    
+            // Clear metrics
+            document.getElementById('iouScore').innerHTML = '';
+            document.getElementById('falseNegatives').innerHTML = '';
+            document.getElementById('falsePositives').innerHTML = '';
+    
+            // Stop webcam if active
+            if (webcamActive) {
+                document.getElementById('stopWebcam').click();
+            }
+    
+            // Clear selected example image state
+            window.selectedExampleImage = null;
+    
+            // Reset button states
+            const startDetectionButton = document.getElementById('startDetection');
+            startDetectionButton.textContent = 'Start Detection';
+            const stopDetectionButton = document.getElementById('stopDetection');
+            if (stopDetectionButton) stopDetectionButton.style.display = 'none';
+    
+            // Reset webcam and video players
+            if (inputVideo) {
+                inputVideo.pause();
+                inputVideo.src = '';
+            }
+    
+            console.log('Reset complete: cleared input, output, ground truth, and metrics.');
+        };
+    </script>
+</body>
+</html>
